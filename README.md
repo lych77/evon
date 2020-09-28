@@ -96,7 +96,7 @@ evt.Emit.Logout(123)
 
 ## Annotations Detailed
 
-All evon annotations has the `@evon(...)` form. Between the parentheses you can specify flags to customize the dispatcher implementation. All flags are predefined words, including: `catch`, `lock`, `pause`, `queue`, `spawn`, `unsub`, `wait`.
+All evon annotations have the `@evon(...)` form. Between the parentheses you can specify flags to customize the dispatcher implementation. All flags are predefined words, including: `catch`, `lock`, `pause`, `queue`, `spawn`, `unsub`, `wait`.
 
 Multiple flags are separated by commas ( `,` ). For example:
 
