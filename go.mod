@@ -1,4 +1,4 @@
-module evon
+module github.com/lych77/evon
 
 go 1.15
 

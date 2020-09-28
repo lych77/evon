@@ -7,7 +7,7 @@
 Installation:
 
 ```shell
-go get -u github.com/lych/evon/cmd/evon
+go get -u github.com/lych77/evon/cmd/evon
 ```
 
 
