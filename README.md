@@ -96,14 +96,14 @@ evt.Emit.Logout(123)
 
 ## Annotations Detailed
 
-All evon annotations has the `@evon(...)` form. Between the parentheses you can specify flags to custom the the dispatcher implementation. All flags are predefined words, including: `catch`, `lock`, `pause`, `queue`, `spawn`, `unsub`, `wait`.
+All evon annotations has the `@evon(...)` form. Between the parentheses you can specify flags to customize the dispatcher implementation. All flags are predefined words, including: `catch`, `lock`, `pause`, `queue`, `spawn`, `unsub`, `wait`.
 
 Multiple flags are separated by commas ( `,` ). For example:
 
 - `@evon(unsub, lock)`
 - `@evon(lock, wait, queue)`
 
-Annotations are case-sensitive. The order of the flags doesn't matter. Some flags can only be used under certain conditions, will be detailed later.
+Annotations are case-sensitive. The order of the flags doesn't matter. Some flags can only be used under certain conditions, will be detailed below.
 
 `@evon` annotations apply only to `func` type or `interface` type definitions. They can reside *anywhere* within the documenting comment texts of the types, while there can be at most *one* annotation per type. For type groups, one annotation can be applied to affect all members in a group:
 
@@ -243,7 +243,7 @@ parent.Emit.Foo(...)
 
 `.Emit` itself is intended to be a valid handler of the event, regardless of being a function or an object.
 
-Exception: for interface handlers, if the interface is not implementable within the current package ( i.e. any of its embedded interfaces that defined outside current package has unexported methods ), `.Emit` will just implement the available part of it, though not be implementing the whole interface. Such dispatchers are not chainable.
+Exception: for interface handlers, if the interface is not implementable within the current package ( i.e. any of its embedded interfaces that defined outside current package has unexported methods ), `.Emit` will just implement the available part of it, though not be implementing the whole interface. Such dispatchers cannot be chained.
 
 ## Requirements on Handler Types
 
