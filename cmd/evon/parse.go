@@ -87,7 +87,7 @@ func (par *parser) ParsePkg() {
 		par.ParseFile(f)
 	}
 
-	par.ResolveTypes()
+	par.ExtractTypes()
 	if len(par.Errors) > 0 {
 		return
 	}
@@ -178,28 +178,34 @@ func (par *parser) ParseFile(file *ast.File) {
 	}
 }
 
-func (par *parser) ResolveTypes() {
+func (par *parser) ExtractTypes() {
 	for _, decl := range par.Decls {
-		for _, typ := range decl.Types {
-			underType, underPkg := par.resolveType(par.Pkg, typ.Type)
+		for _, ts := range decl.Types {
+			underType, underPkg := par.resolveType(par.Pkg, ts.Type)
 
 			switch realType := underType.(type) {
 			case *ast.FuncType:
 				decl.Events = append(decl.Events, &eventRec{
-					Name:  typ.Name,
-					Funcs: []*signature{par.resolveFunc(underPkg, "", realType)},
+					Name:  ts.Name,
+					Funcs: []*signature{par.extractFunc(underPkg, "", realType)},
 				})
 			case *ast.InterfaceType:
-				if funcs := par.resolveInterface(underPkg, realType); len(funcs) == 0 {
+				if funcs, ok := par.extractInterface(underPkg, realType); !ok {
+					par.Errors = append(par.Errors, fmt.Errorf(`%s: Cannot resolve type "%s" due to compilation errors`,
+						par.Pkg.Fset.Position(ts.Name.NamePos), ts.Name.Name))
+				} else if len(funcs) == 0 {
 					par.Errors = append(par.Errors, fmt.Errorf(`%s: Interface type "%s" has no usable methods`,
-						par.Pkg.Fset.Position(typ.Name.NamePos), typ.Name.Name))
+						par.Pkg.Fset.Position(ts.Name.NamePos), ts.Name.Name))
 				} else {
 					decl.Events = append(decl.Events, &eventRec{
-						Name:  typ.Name,
+						Name:  ts.Name,
 						Funcs: funcs,
 					})
 				}
 			case nil:
+				par.Errors = append(par.Errors, fmt.Errorf(`%s: Cannot resolve type "%s" due to compilation errors`,
+					par.Pkg.Fset.Position(ts.Name.NamePos), ts.Name.Name))
+			default:
 				par.Errors = append(par.Errors, fmt.Errorf("%s: Evon annotations apply only to func or interface type declarations",
 					par.Pkg.Fset.Position(decl.Ann.Pos)))
 			}
@@ -215,11 +221,8 @@ func (par *parser) identMap(pkg *packages.Package) map[types.Object]*ast.Ident {
 
 	res = map[types.Object]*ast.Ident{}
 	for i, o := range pkg.TypesInfo.Defs {
-		if tn, ok := o.(*types.TypeName); ok && tn.Parent() == pkg.Types.Scope() && tn.Exported() {
-			switch tn.Type().Underlying().(type) {
-			case *types.Signature, *types.Interface:
-				res[o] = i
-			}
+		if o != nil && o.Parent() == pkg.Types.Scope() && o.Exported() {
+			res[o] = i
 		}
 	}
 	par.IdentMaps[pkg] = res
@@ -237,18 +240,16 @@ func (par *parser) importRecord(pkg *types.Package) *importRec {
 
 func (par *parser) resolveType(pkg *packages.Package, typ ast.Expr) (ast.Expr, *packages.Package) {
 	switch realType := typ.(type) {
-	case *ast.FuncType:
-		return typ, pkg
-	case *ast.InterfaceType:
-		return typ, pkg
 	case *ast.Ident:
 		if realType.Obj != nil {
 			return par.resolveType(pkg, realType.Obj.Decl.(*ast.TypeSpec).Type)
 		}
 
-		target := pkg.TypesInfo.Uses[realType]
+		target, ok := pkg.TypesInfo.Uses[realType]
+		if !ok {
+			return nil, nil
+		}
 		depPkg := pkg.Imports[target.Pkg().Path()]
-
 		depIdent, ok := par.identMap(depPkg)[target]
 		if !ok {
 			return nil, nil
@@ -260,11 +261,11 @@ func (par *parser) resolveType(pkg *packages.Package, typ ast.Expr) (ast.Expr, *
 	case *ast.ParenExpr:
 		return par.resolveType(pkg, realType.X)
 	default:
-		return nil, nil
+		return typ, pkg
 	}
 }
 
-func (par *parser) resolveFunc(pkg *packages.Package, name string, typ *ast.FuncType) *signature {
+func (par *parser) extractFunc(pkg *packages.Package, name string, typ *ast.FuncType) *signature {
 	res := &signature{
 		Name:   name,
 		Params: typ.Params.List,
@@ -285,23 +286,34 @@ func (par *parser) resolveFunc(pkg *packages.Package, name string, typ *ast.Func
 	return res
 }
 
-func (par *parser) resolveInterface(pkg *packages.Package, typ *ast.InterfaceType) []*signature {
+func (par *parser) extractInterface(pkg *packages.Package, typ *ast.InterfaceType) ([]*signature, bool) {
 	res := []*signature{}
 
 	for _, m := range typ.Methods.List {
 		if len(m.Names) > 0 {
 			if m.Names[0].IsExported() || pkg == par.Pkg {
-				frec := par.resolveFunc(pkg, m.Names[0].Name, m.Type.(*ast.FuncType))
+				frec := par.extractFunc(pkg, m.Names[0].Name, m.Type.(*ast.FuncType))
 				res = append(res, frec)
 			}
 			continue
 		}
 
 		embType, embPkg := par.resolveType(pkg, m.Type)
-		res = append(res, par.resolveInterface(embPkg, embType.(*ast.InterfaceType))...)
+		if embType == nil {
+			return nil, false
+		}
+		embIntf, ok := embType.(*ast.InterfaceType)
+		if !ok {
+			return nil, false
+		}
+		embRes, ok := par.extractInterface(embPkg, embIntf)
+		if !ok {
+			return nil, false
+		}
+		res = append(res, embRes...)
 	}
 
-	return res
+	return res, true
 }
 
 type typeVisitor struct {
