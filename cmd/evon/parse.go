@@ -198,7 +198,7 @@ func (par *parser) ExtractTypes() {
 					Funcs: []*signature{par.extractFunc(underPkg, "", realType)},
 				})
 			case *ast.InterfaceType:
-				if funcs, ok := par.extractInterface(underPkg, realType); !ok {
+				if funcs, ok := par.extractInterface(underPkg, realType, map[string]bool{}); !ok {
 					par.Errors = append(par.Errors, fmt.Errorf(`%s: Cannot resolve type "%s" due to compilation errors`,
 						par.Pkg.Fset.Position(ts.Name.NamePos), ts.Name.Name))
 				} else if len(funcs) == 0 {
@@ -294,14 +294,17 @@ func (par *parser) extractFunc(pkg *packages.Package, name string, typ *ast.Func
 	return res
 }
 
-func (par *parser) extractInterface(pkg *packages.Package, typ *ast.InterfaceType) ([]*signature, bool) {
+func (par *parser) extractInterface(pkg *packages.Package, typ *ast.InterfaceType, mthdNames map[string]bool) ([]*signature, bool) {
 	res := []*signature{}
 
 	for _, m := range typ.Methods.List {
 		if len(m.Names) > 0 {
 			if m.Names[0].IsExported() || pkg == par.Pkg {
 				frec := par.extractFunc(pkg, m.Names[0].Name, m.Type.(*ast.FuncType))
-				res = append(res, frec)
+				if !mthdNames[frec.Name] {
+					mthdNames[frec.Name] = true
+					res = append(res, frec)
+				}
 			}
 			continue
 		}
@@ -314,7 +317,7 @@ func (par *parser) extractInterface(pkg *packages.Package, typ *ast.InterfaceTyp
 		if !ok {
 			return nil, false
 		}
-		embRes, ok := par.extractInterface(embPkg, embIntf)
+		embRes, ok := par.extractInterface(embPkg, embIntf, mthdNames)
 		if !ok {
 			return nil, false
 		}
