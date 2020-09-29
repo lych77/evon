@@ -264,13 +264,13 @@ Exception: for interface handlers, if the interface is not implementable within 
 
 There's almost no limitations on handler types besides the name suffix rule. But to cover the details, let's make clear of some points.
 
-**Emitter parameters:**
+**Handler parameters:**
 
 - Ellipsis ( `...` ) parameters are supported.
 - Parameter name omitting is supported ( dummy names will be created to make the generated code work ).
 - Blank identifiers ( `_` ) are supported and are dealt with the same way as omitted ones.
 
-**Emitter return values:**
+**Handler return values:**
 
 - Return values are not meaningful and not recommended, though supported for compatibility, keep using returnless functions when possible.
 - Handler return values are all discarded and would never be passed back to the emitter, while emitters always return meaningless "zero"s.
