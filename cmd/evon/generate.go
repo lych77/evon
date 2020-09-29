@@ -36,7 +36,6 @@ import (
 	"go/printer"
 	"go/token"
 	"os"
-	"sort"
 	"strings"
 	"text/template"
 
@@ -52,7 +51,8 @@ type genFile struct {
 	HandlerSuffix string
 	EventSuffix   string
 
-	RenameSyncTypes bool
+	SyncAlias      string
+	SyncAliasLocal string
 }
 
 type genImport struct {
@@ -75,12 +75,12 @@ type genFunc struct {
 	Returns string
 }
 
-func extractParamsArgs(list []*ast.Field, fset *token.FileSet, dedupAll dedupSet) (string, string) {
-	dedup := newDedupSet("_")
+func extractParamsArgs(list []*ast.Field, fset *token.FileSet, paramSet dedupSet) (string, string) {
+	dummies := newDedupSet("_")
 	for _, pg := range list {
 		for _, n := range pg.Names {
 			if n.Name != "_" {
-				dedup.Add(n.Name)
+				dummies.Resolve(n.Name)
 			}
 		}
 	}
@@ -90,18 +90,18 @@ func extractParamsArgs(list []*ast.Field, fset *token.FileSet, dedupAll dedupSet
 
 	for _, pg := range list {
 		if len(pg.Names) == 0 {
-			pg.Names = append(pg.Names, ast.NewIdent(dedup.Add("_")))
+			pg.Names = append(pg.Names, ast.NewIdent(dummies.Resolve("_")))
 		}
 
 		argGrp := []string{}
 		for _, n := range pg.Names {
 			if n.Name == "_" {
-				n.Name = dedup.Add("_")
+				n.Name = dummies.Resolve("_")
 			}
 
 			argGrp = append(argGrp, n.Name)
 			args = append(args, n.Name)
-			dedupAll[n.Name] = true
+			paramSet[n.Name] = true
 		}
 
 		typeBuf := &bytes.Buffer{}
@@ -139,7 +139,9 @@ const noHandlerTypesDetected = "(No handler types detected)"
 
 func generate(pkg *packages.Package, path string) {
 	for _, e := range pkg.Errors {
-		fmt.Fprintf(os.Stderr, "[go] %s\n", e)
+		if !strings.HasPrefix(e.Pos, path) {
+			fmt.Fprintf(os.Stderr, "[go] %s\n", e)
+		}
 	}
 
 	par := newParser(pkg)
@@ -158,14 +160,19 @@ func generate(pkg *packages.Package, path string) {
 		EventSuffix:   *flagEventSuffix,
 	}
 
+	if rec, ok := par.Imports["sync"]; ok {
+		file.SyncAlias = rec.Alias
+		delete(par.PkgNameSet, file.SyncAlias)
+	}
+
 	for _, decl := range par.Decls {
 		for _, ev := range decl.Events {
-			dedupAll := dedupSet{}
+			paramSet := dedupSet{}
 
 			gfs := []*genFunc{}
 			for _, f := range ev.Funcs {
 				gf := &genFunc{Name: f.Name}
-				gf.Params, gf.Args = extractParamsArgs(f.Params, pkg.Fset, dedupAll)
+				gf.Params, gf.Args = extractParamsArgs(f.Params, pkg.Fset, paramSet)
 				gf.Returns = extractReturns(f.Returns, pkg.Fset)
 				gfs = append(gfs, gf)
 			}
@@ -177,14 +184,13 @@ func generate(pkg *packages.Package, path string) {
 				Funcs:    gfs,
 				Dedups:   map[string]string{},
 			}
+
+			par.PkgNameSet.Merge(paramSet)
+
 			for _, n := range localIdents {
-				ge.Dedups[n] = dedupAll.Add(n)
+				ge.Dedups[n] = paramSet.Resolve(n)
 			}
 			file.Events = append(file.Events, ge)
-
-			if dedupAll["sync"] {
-				file.RenameSyncTypes = true
-			}
 		}
 	}
 
@@ -199,13 +205,19 @@ func generate(pkg *packages.Package, path string) {
 		return
 	}
 
-	for p, r := range par.Imports {
-		file.Imports = append(file.Imports, &genImport{Alias: r.Alias, Path: p})
+	for _, r := range par.ImportList {
+		if r.Alias == r.Name {
+			r.Alias = ""
+		}
+		file.Imports = append(file.Imports, &genImport{Alias: r.Alias, Path: r.Path})
 	}
 
-	sort.Slice(file.Imports, func(i, j int) bool {
-		return file.Imports[i].Path < file.Imports[j].Path
-	})
+	if par.NeedSyncLocal {
+		file.SyncAliasLocal = par.PkgNameSet.Resolve(file.SyncAlias)
+		if file.SyncAliasLocal != file.SyncAlias {
+			file.Imports = append(file.Imports, &genImport{Alias: file.SyncAliasLocal, Path: "sync"})
+		}
+	}
 
 	writeFile(file, path)
 }

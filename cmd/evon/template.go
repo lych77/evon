@@ -38,12 +38,6 @@ package {{.Package}}
 	import ({{range .Imports -}}{{.Alias}}"{{.Path}}";{{end}})
 {{- end}}
 
-{{- $wgTyp := "sync.WaitGroup"}}
-{{if .RenameSyncTypes -}}
-	type {{$wgTyp}} = sync.WaitGroup
-	{{- $wgTyp = "__evon_sync_WaitGroup__"}}
-{{- end}}
-
 {{- range .Events}}
 	{{- $ev := index .Dedups "ev"}}
 	{{- $s := index .Dedups "s"}}
@@ -65,7 +59,7 @@ package {{.Package}}
 		{{if $intf}}Emit *{{$emitterTyp}};{{end -}}
 		slots []{{if $compSlot}}{{$slotTyp}}{{else}}{{$hdlrTyp}}{{end}};
 		{{- if .Flags.queue}}qsize int;{{end}}
-		{{- if .Flags.lock}}lock sync.RWMutex;{{end}}
+		{{- if .Flags.lock}}lock {{$.SyncAlias}}.RWMutex;{{end}}
 		{{- if .Flags.pause}}paused bool;{{end}}
 		{{- if .Flags.catch}}catch func(interface{});{{end}}
 	}
@@ -118,7 +112,7 @@ package {{.Package}}
 		func {{$recv}} {{or .Name "Emit"}}({{.Params}}) {{if .Returns}}({{.Returns}}){{end}} {
 			{{- if $flags.lock}}{{$evLoc}}.lock.RLock(); defer {{$evLoc}}.lock.RUnlock();{{end}}
 			{{- if $flags.pause}}if {{$evLoc}}.paused { return };{{end}}
-			{{- if $flags.wait}}{{$wg}} := {{$wgTyp}}{}; {{$wg}}.Add(len({{$evLoc}}.slots));{{end}}
+			{{- if $flags.wait}}{{$wg}} := {{$.SyncAliasLocal}}.WaitGroup{}; {{$wg}}.Add(len({{$evLoc}}.slots));{{end}}
 			for _, {{$s}} := range {{$evLoc}}.slots {
 				{{- $wrapBegin}}
 				{{- if $flags.wait}}defer {{$wg}}.Done();{{end}}

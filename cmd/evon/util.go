@@ -40,11 +40,17 @@ func newDedupSet(preset ...string) dedupSet {
 	return set
 }
 
-func (set dedupSet) Add(name string) string {
+func (set dedupSet) Resolve(name string) string {
 	alias := name
 	for i := 1; set[alias]; i++ {
 		alias = name + strconv.Itoa(i)
 	}
 	set[alias] = true
 	return alias
+}
+
+func (set dedupSet) Merge(other dedupSet) {
+	for n := range other {
+		set[n] = true
+	}
 }

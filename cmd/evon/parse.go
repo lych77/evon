@@ -45,9 +45,13 @@ type parser struct {
 	Decls  []*decl
 	Errors []error
 
-	IdentMaps map[*packages.Package]map[types.Object]*ast.Ident
-	Imports   map[string]*importRec
-	NeedSync  bool
+	IdentMaps  map[*packages.Package]map[types.Object]*ast.Ident
+	Imports    map[string]*importRec
+	ImportList []*importRec
+
+	NeedSync      bool
+	NeedSyncLocal bool
+	PkgNameSet    dedupSet
 }
 
 type decl struct {
@@ -68,6 +72,7 @@ type signature struct {
 }
 
 type importRec struct {
+	Path       string
 	Name       string
 	Alias      string
 	PkgIdents  []*ast.Ident
@@ -117,7 +122,10 @@ func (par *parser) ParseFile(file *ast.File) {
 			anns = append(anns, rec)
 			cmtAnns[cg] = rec
 
-			if ann.Flags[annLock] || ann.Flags[annWait] {
+			if ann.Flags[annWait] {
+				par.NeedSync = true
+				par.NeedSyncLocal = true
+			} else if ann.Flags[annLock] {
 				par.NeedSync = true
 			}
 		}
@@ -232,7 +240,7 @@ func (par *parser) identMap(pkg *packages.Package) map[types.Object]*ast.Ident {
 func (par *parser) importRecord(pkg *types.Package) *importRec {
 	res, ok := par.Imports[pkg.Path()]
 	if !ok {
-		res = &importRec{Name: pkg.Name()}
+		res = &importRec{Path: pkg.Path(), Name: pkg.Name()}
 		par.Imports[pkg.Path()] = res
 	}
 	return res
@@ -345,40 +353,28 @@ func (vis *typeVisitor) Visit(node ast.Node) ast.Visitor {
 }
 
 func (par *parser) DedupImports() {
-	type pathRec struct {
-		Path string
-		Rec  *importRec
-	}
-	pathRecs := []*pathRec{}
-
-	for p, r := range par.Imports {
-		pathRecs = append(pathRecs, &pathRec{Path: p, Rec: r})
+	if par.NeedSync && par.Imports["sync"] == nil {
+		par.Imports["sync"] = &importRec{Path: "sync", Name: "sync"}
 	}
 
-	sort.Slice(pathRecs, func(i, j int) bool {
-		return !strings.Contains(pathRecs[i].Path, ".") && strings.Contains(pathRecs[j].Path, ".")
+	for _, r := range par.Imports {
+		par.ImportList = append(par.ImportList, r)
+	}
+	sort.Slice(par.ImportList, func(i, j int) bool {
+		iDot := strings.Contains(par.ImportList[i].Path, ".")
+		jDot := strings.Contains(par.ImportList[j].Path, ".")
+		return !iDot && jDot || iDot == jDot && par.ImportList[i].Path < par.ImportList[j].Path
 	})
 
-	dedup := newDedupSet("sync")
-	for _, r := range pathRecs {
-		r.Rec.Alias = dedup.Add(r.Rec.Name)
+	par.PkgNameSet = newDedupSet()
+	for _, r := range par.ImportList {
+		r.Alias = par.PkgNameSet.Resolve(r.Name)
 
-		for _, id := range r.Rec.TypeIdents {
-			id.Name = r.Rec.Alias + "." + id.Name
+		for _, id := range r.TypeIdents {
+			id.Name = r.Alias + "." + id.Name
 		}
-
-		if r.Rec.Alias == r.Rec.Name {
-			r.Rec.Alias = ""
-		} else {
-			for _, id := range r.Rec.PkgIdents {
-				id.Name = r.Rec.Name
-			}
-		}
-	}
-
-	if par.NeedSync {
-		if _, ok := par.Imports["sync"]; !ok {
-			par.Imports["sync"] = &importRec{Name: "sync"}
+		for _, id := range r.PkgIdents {
+			id.Name = r.Alias
 		}
 	}
 }
