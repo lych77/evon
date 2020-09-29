@@ -103,7 +103,7 @@ Multiple flags are separated by commas ( `,` ). For example:
 - `@evon(unsub, lock)`
 - `@evon(lock, wait, queue)`
 
-Annotations are case-sensitive. The order of the flags doesn't matter. Some flags can only be used under certain conditions, will be detailed below.
+Annotations are case-sensitive. The order of the flags doesn't matter. Some flags can only be used under certain conditions, will be detailed later.
 
 `@evon` annotations apply only to `func` type or `interface` type definitions. They can reside *anywhere* within the documenting comment texts of the types, while there can be at most *one* annotation per type. For type groups, one annotation can be applied to affect all members in a group:
 
@@ -155,7 +155,7 @@ Which unsubscribes all existing subscribers from the dispatcher.
 
 ## Thread Safety
 
-By default dispatchers are *not* thread-safe for performance reasons, and this is satisfactory in many circumstances. I cases really requiring thread safety, the `lock` flag can be used, which adds a `sync.RWLock` to the generated code to guard the subscriber list, keeping concurrent sub/unsub/emit operations from different goroutines out of race conditions:
+By default dispatchers are *not* thread-safe for performance, and this is satisfactory in many circumstances. In cases really requiring thread safety, the `lock` flag can be used, which adds a `sync.RWMutex` to the generated code to guard the subscriber list, keeping concurrent sub/unsub/emit operations from different goroutines out of race conditions:
 
 ```go
 // @evon(lock)
