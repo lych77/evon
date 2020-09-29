@@ -1,0 +1,6 @@
+language: go
+
+go:
+- 1.15.x
+
+before_script: cd cmd/evon
