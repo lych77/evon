@@ -2,7 +2,7 @@
 
 **Evon** is a lightweight event dispatcher code generator for Golang. It reads special annotations from the comments on handler type definitions in the source code and generates fast and versatile event dispatcher code for you. It functions like .NET events / Qt signal-slots / Java listeners / Node.js ".on" s, yet provides more customizations.
 
-[![Build Status](https://travis-ci.com/lych77/evon.svg?branch=master)](https://travis-ci.com/lych77/evon)
+[![Build Status](https://travis-ci.com/lych77/evon.svg?branch=master)](https://travis-ci.com/lych77/evon) [![Go Report Card](https://goreportcard.com/badge/github.com/lych77/evon)](https://goreportcard.com/report/github.com/lych77/evon)
 
 - [Quick Start](#quick-start)
 - [Using Interfaces](#using-interfaces)
