@@ -63,5 +63,5 @@ func main() {
 		return
 	}
 
-	generate(pkgs[0], filepath.Join(wd, *flagOut))
+	process(pkgs[0], filepath.Join(wd, *flagOut))
 }

@@ -43,38 +43,6 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
-type genFile struct {
-	Package string
-	Imports []*genImport
-	Events  []*genEvent
-
-	HandlerSuffix string
-	EventSuffix   string
-
-	SyncAlias      string
-	SyncAliasLocal string
-}
-
-type genImport struct {
-	Alias string
-	Path  string
-}
-
-type genEvent struct {
-	Name     string
-	Flags    map[string]bool
-	FlagsLit string
-	Funcs    []*genFunc
-	Dedups   map[string]string
-}
-
-type genFunc struct {
-	Name    string
-	Params  string
-	Args    string
-	Returns string
-}
-
 func extractParamsArgs(list []*ast.Field, fset *token.FileSet, paramSet dedupSet) (string, string) {
 	dummies := newDedupSet("_")
 	for _, pg := range list {
@@ -135,9 +103,7 @@ func extractReturns(list []*ast.Field, fset *token.FileSet) string {
 	return strings.Join(returns, ", ")
 }
 
-const noHandlerTypesDetected = "(No handler types detected)"
-
-func generate(pkg *packages.Package, path string) {
+func process(pkg *packages.Package, path string) {
 	for _, e := range pkg.Errors {
 		if !strings.HasPrefix(e.Pos, path) {
 			fmt.Fprintf(os.Stderr, "[go] %s\n", e)
@@ -154,8 +120,56 @@ func generate(pkg *packages.Package, path string) {
 		return
 	}
 
+	if len(par.Decls) == 0 {
+		fmt.Println("(No handler types detected)")
+		if !*flagShow {
+			os.Remove(path)
+		}
+		return
+	}
+
+	if *flagShow {
+		showSummary(par)
+	} else {
+		generate(par, path)
+	}
+}
+
+type genFile struct {
+	Package string
+	Imports []*genImport
+	Events  []*genEvent
+
+	HandlerSuffix string
+	EventSuffix   string
+
+	SyncAlias      string
+	SyncAliasLocal string
+}
+
+type genImport struct {
+	Alias string
+	Path  string
+}
+
+type genEvent struct {
+	Name     string
+	Flags    map[string]bool
+	FlagsLit string
+	Funcs    []*genFunc
+	Dedups   map[string]string
+}
+
+type genFunc struct {
+	Name    string
+	Params  string
+	Args    string
+	Returns string
+}
+
+func generate(par *parser, path string) {
 	file := &genFile{
-		Package:       pkg.Name,
+		Package:       par.Pkg.Name,
 		HandlerSuffix: *flagHandlerSuffix,
 		EventSuffix:   *flagEventSuffix,
 	}
@@ -172,8 +186,8 @@ func generate(pkg *packages.Package, path string) {
 			gfs := []*genFunc{}
 			for _, f := range ev.Funcs {
 				gf := &genFunc{Name: f.Name}
-				gf.Params, gf.Args = extractParamsArgs(f.Params, pkg.Fset, paramSet)
-				gf.Returns = extractReturns(f.Returns, pkg.Fset)
+				gf.Params, gf.Args = extractParamsArgs(f.Params, par.Pkg.Fset, paramSet)
+				gf.Returns = extractReturns(f.Returns, par.Pkg.Fset)
 				gfs = append(gfs, gf)
 			}
 
@@ -192,17 +206,6 @@ func generate(pkg *packages.Package, path string) {
 			}
 			file.Events = append(file.Events, ge)
 		}
-	}
-
-	if *flagShow {
-		showSummary(par)
-		return
-	}
-
-	if len(par.Decls) == 0 {
-		os.Remove(path)
-		fmt.Println(noHandlerTypesDetected)
-		return
 	}
 
 	for _, r := range par.ImportList {
@@ -302,11 +305,6 @@ func showSummary(par *parser) {
 
 			rows = append(rows, row)
 		}
-	}
-
-	if len(rows) == 0 {
-		fmt.Println(noHandlerTypesDetected)
-		return
 	}
 
 	for _, r := range rows {

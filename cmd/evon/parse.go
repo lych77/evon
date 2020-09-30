@@ -42,7 +42,7 @@ import (
 type parser struct {
 	Pkg *packages.Package
 
-	Decls  []*decl
+	Decls  []*declRec
 	Errors []error
 
 	IdentMaps  map[*packages.Package]map[types.Object]*ast.Ident
@@ -54,18 +54,17 @@ type parser struct {
 	PkgNameSet    dedupSet
 }
 
-type decl struct {
+type declRec struct {
 	Ann    *annotation
-	Types  []*ast.TypeSpec
 	Events []*eventRec
 }
 
 type eventRec struct {
 	Name  *ast.Ident
-	Funcs []*signature
+	Funcs []*funcRec
 }
 
-type signature struct {
+type funcRec struct {
 	Name    string
 	Params  []*ast.Field
 	Returns []*ast.Field
@@ -92,7 +91,6 @@ func (par *parser) ParsePkg() {
 		par.ParseFile(f)
 	}
 
-	par.ExtractTypes()
 	if len(par.Errors) > 0 {
 		return
 	}
@@ -102,7 +100,7 @@ func (par *parser) ParsePkg() {
 
 func (par *parser) ParseFile(file *ast.File) {
 	type annRec struct {
-		Decl    *decl
+		Decl    *declRec
 		Errors  []error
 		Visited bool
 	}
@@ -118,16 +116,12 @@ func (par *parser) ParseFile(file *ast.File) {
 		}
 
 		if ann != nil {
-			rec := &annRec{Decl: &decl{Ann: ann}}
+			rec := &annRec{Decl: &declRec{Ann: ann}}
 			anns = append(anns, rec)
 			cmtAnns[cg] = rec
 
-			if ann.Flags[annWait] {
-				par.NeedSync = true
-				par.NeedSyncLocal = true
-			} else if ann.Flags[annLock] {
-				par.NeedSync = true
-			}
+			par.NeedSyncLocal = par.NeedSyncLocal || ann.Flags[annWait]
+			par.NeedSync = par.NeedSyncLocal || ann.Flags[annLock]
 		}
 	}
 
@@ -160,7 +154,7 @@ func (par *parser) ParseFile(file *ast.File) {
 			}
 
 			curAnn := innerStack[len(innerStack)-1]
-			curAnn.Decl.Types = append(curAnn.Decl.Types, ts)
+			par.ExtractType(curAnn.Decl, ts)
 
 			for _, ann := range innerStack {
 				ann.Visited = true
@@ -172,52 +166,42 @@ func (par *parser) ParseFile(file *ast.File) {
 		if !ann.Visited {
 			par.Errors = append(par.Errors, fmt.Errorf("%s: Evon annotations apply only to func or interface type declarations",
 				par.Pkg.Fset.Position(ann.Decl.Ann.Pos)))
-			continue
+		} else if len(ann.Errors) > 0 {
+			par.Errors = append(par.Errors, ann.Errors...)
+		} else {
+			par.Decls = append(par.Decls, ann.Decl)
 		}
-
-		if len(ann.Errors) > 0 {
-			for _, e := range ann.Errors {
-				par.Errors = append(par.Errors, e)
-			}
-			continue
-		}
-
-		par.Decls = append(par.Decls, ann.Decl)
 	}
 }
 
-func (par *parser) ExtractTypes() {
-	for _, decl := range par.Decls {
-		for _, ts := range decl.Types {
-			underType, underPkg := par.resolveType(par.Pkg, ts.Type)
+func (par *parser) ExtractType(decl *declRec, ts *ast.TypeSpec) {
+	underType, underPkg := par.resolveType(par.Pkg, ts.Type)
 
-			switch realType := underType.(type) {
-			case *ast.FuncType:
-				decl.Events = append(decl.Events, &eventRec{
-					Name:  ts.Name,
-					Funcs: []*signature{par.extractFunc(underPkg, "", realType)},
-				})
-			case *ast.InterfaceType:
-				if funcs, ok := par.extractInterface(underPkg, realType, map[string]bool{}); !ok {
-					par.Errors = append(par.Errors, fmt.Errorf(`%s: Cannot resolve type "%s" due to compilation errors`,
-						par.Pkg.Fset.Position(ts.Name.NamePos), ts.Name.Name))
-				} else if len(funcs) == 0 {
-					par.Errors = append(par.Errors, fmt.Errorf(`%s: Interface type "%s" has no usable methods`,
-						par.Pkg.Fset.Position(ts.Name.NamePos), ts.Name.Name))
-				} else {
-					decl.Events = append(decl.Events, &eventRec{
-						Name:  ts.Name,
-						Funcs: funcs,
-					})
-				}
-			case nil:
-				par.Errors = append(par.Errors, fmt.Errorf(`%s: Cannot resolve type "%s" due to compilation errors`,
-					par.Pkg.Fset.Position(ts.Name.NamePos), ts.Name.Name))
-			default:
-				par.Errors = append(par.Errors, fmt.Errorf("%s: Evon annotations apply only to func or interface type declarations",
-					par.Pkg.Fset.Position(decl.Ann.Pos)))
-			}
+	switch realType := underType.(type) {
+	case *ast.FuncType:
+		decl.Events = append(decl.Events, &eventRec{
+			Name:  ts.Name,
+			Funcs: []*funcRec{par.extractFunc(underPkg, "", realType)},
+		})
+	case *ast.InterfaceType:
+		if funcs, ok := par.extractInterface(underPkg, realType, map[string]bool{}); !ok {
+			par.Errors = append(par.Errors, fmt.Errorf(`%s: Cannot resolve type "%s" due to compilation errors`,
+				par.Pkg.Fset.Position(ts.Name.NamePos), ts.Name.Name))
+		} else if len(funcs) == 0 {
+			par.Errors = append(par.Errors, fmt.Errorf(`%s: Interface type "%s" has no usable methods`,
+				par.Pkg.Fset.Position(ts.Name.NamePos), ts.Name.Name))
+		} else {
+			decl.Events = append(decl.Events, &eventRec{
+				Name:  ts.Name,
+				Funcs: funcs,
+			})
 		}
+	case nil:
+		par.Errors = append(par.Errors, fmt.Errorf(`%s: Cannot resolve type "%s" due to compilation errors`,
+			par.Pkg.Fset.Position(ts.Name.NamePos), ts.Name.Name))
+	default:
+		par.Errors = append(par.Errors, fmt.Errorf("%s: Evon annotations apply only to func or interface type declarations",
+			par.Pkg.Fset.Position(decl.Ann.Pos)))
 	}
 }
 
@@ -273,8 +257,8 @@ func (par *parser) resolveType(pkg *packages.Package, typ ast.Expr) (ast.Expr, *
 	}
 }
 
-func (par *parser) extractFunc(pkg *packages.Package, name string, typ *ast.FuncType) *signature {
-	res := &signature{
+func (par *parser) extractFunc(pkg *packages.Package, name string, typ *ast.FuncType) *funcRec {
+	res := &funcRec{
 		Name:   name,
 		Params: typ.Params.List,
 	}
@@ -294,8 +278,8 @@ func (par *parser) extractFunc(pkg *packages.Package, name string, typ *ast.Func
 	return res
 }
 
-func (par *parser) extractInterface(pkg *packages.Package, typ *ast.InterfaceType, mthdNames map[string]bool) ([]*signature, bool) {
-	res := []*signature{}
+func (par *parser) extractInterface(pkg *packages.Package, typ *ast.InterfaceType, mthdNames map[string]bool) ([]*funcRec, bool) {
+	res := []*funcRec{}
 
 	for _, m := range typ.Methods.List {
 		if len(m.Names) > 0 {
