@@ -56,7 +56,7 @@ package {{.Package}}
 	// {{$evTyp}} is the **evon** event dispatcher type for {{$hdlrTyp}} handlers.
 	// Flags: {{.FlagsLit}}.
 	type {{$evTyp}} struct {
-		{{if $intf}}Emit *{{$emitterTyp}};{{end -}}
+		{{if $intf}}Emit {{$emitterTyp}};{{end -}}
 		slots []{{if $compSlot}}{{$slotTyp}}{{else}}{{$hdlrTyp}}{{end}};
 		{{- if .Flags.queue}}qsize int;{{end}}
 		{{- if .Flags.lock}}lock {{$.SyncAlias}}.RWMutex;{{end}}
@@ -83,7 +83,7 @@ package {{.Package}}
 	{{- $recv := printf "(%s *%s)" $ev $evTyp}}
 	{{- $evLoc := $ev}}
 	{{- if $intf}}
-		{{- $recv = printf "(%s *%s)" $em $emitterTyp}}
+		{{- $recv = printf "(%s %s)" $em $emitterTyp}}
 		{{- $evLoc = printf "%s.ev" $em}}
 	{{end}}
 
@@ -134,7 +134,7 @@ package {{.Package}}
 	// {{$newName}} creates an **evon** event dispatcher {{$evTyp}}.
 	func {{$newName}}({{if .Flags.queue}}qsize int,{{end}}{{if .Flags.catch}}catch func(interface{}){{end}}) *{{$evTyp}} {
 		ev := &{{$evTyp}}{ {{if .Flags.queue}}qsize: qsize,{{end}}{{if .Flags.catch}}catch: catch{{end}} };
-		{{- if $intf}}em := &{{$emitterTyp}}{ev}; ev.Emit = em{{end}}
+		{{- if $intf}}ev.Emit.ev = ev{{end}}
 		return ev
 	}
 
