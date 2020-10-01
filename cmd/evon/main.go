@@ -45,16 +45,25 @@ var (
 )
 
 func main() {
+	flag.Usage = func() {
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [flags] [dir]\nFlags:\n", os.Args[0])
+		flag.PrintDefaults()
+	}
 	flag.Parse()
 
-	wd, err := os.Getwd()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Fatal: %s\n", err)
-		return
+	dir := flag.Arg(0)
+	if dir == "" {
+		err := error(nil)
+		dir, err = os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Fatal: %s\n", err)
+			return
+		}
 	}
 
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedImports | packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedDeps,
+		Dir:  dir,
 	}
 
 	pkgs, err := packages.Load(cfg)
@@ -63,5 +72,5 @@ func main() {
 		return
 	}
 
-	process(pkgs[0], filepath.Join(wd, *flagOut))
+	process(pkgs[0], filepath.Join(dir, *flagOut))
 }
