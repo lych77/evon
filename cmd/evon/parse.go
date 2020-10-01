@@ -154,7 +154,12 @@ func (par *parser) ParseFile(file *ast.File) {
 			}
 
 			curAnn := innerStack[len(innerStack)-1]
-			par.ExtractType(curAnn.Decl, ts)
+
+			if ev, err := par.ExtractEvent(curAnn.Decl, ts); err != nil {
+				par.Errors = append(par.Errors, err)
+			} else {
+				curAnn.Decl.Events = append(curAnn.Decl.Events, ev)
+			}
 
 			for _, ann := range innerStack {
 				ann.Visited = true
@@ -174,34 +179,28 @@ func (par *parser) ParseFile(file *ast.File) {
 	}
 }
 
-func (par *parser) ExtractType(decl *declRec, ts *ast.TypeSpec) {
+func (par *parser) ExtractEvent(decl *declRec, ts *ast.TypeSpec) (*eventRec, error) {
 	underType, underPkg := par.resolveType(par.Pkg, ts.Type)
 
 	switch realType := underType.(type) {
 	case *ast.FuncType:
-		decl.Events = append(decl.Events, &eventRec{
-			Name:  ts.Name,
-			Funcs: []*funcRec{par.extractFunc(underPkg, "", realType)},
-		})
+		return &eventRec{Name: ts.Name, Funcs: []*funcRec{par.extractFunc(underPkg, "", realType)}}, nil
 	case *ast.InterfaceType:
 		if funcs, ok := par.extractInterface(underPkg, realType, map[string]bool{}); !ok {
-			par.Errors = append(par.Errors, fmt.Errorf(`%s: Cannot resolve type "%s" due to compilation errors`,
-				par.Pkg.Fset.Position(ts.Name.NamePos), ts.Name.Name))
+			return nil, fmt.Errorf(`%s: Cannot resolve type "%s" due to compilation errors`,
+				par.Pkg.Fset.Position(ts.Name.NamePos), ts.Name.Name)
 		} else if len(funcs) == 0 {
-			par.Errors = append(par.Errors, fmt.Errorf(`%s: Interface type "%s" has no usable methods`,
-				par.Pkg.Fset.Position(ts.Name.NamePos), ts.Name.Name))
+			return nil, fmt.Errorf(`%s: Interface type "%s" has no usable methods`,
+				par.Pkg.Fset.Position(ts.Name.NamePos), ts.Name.Name)
 		} else {
-			decl.Events = append(decl.Events, &eventRec{
-				Name:  ts.Name,
-				Funcs: funcs,
-			})
+			return &eventRec{Name: ts.Name, Funcs: funcs}, nil
 		}
 	case nil:
-		par.Errors = append(par.Errors, fmt.Errorf(`%s: Cannot resolve type "%s" due to compilation errors`,
-			par.Pkg.Fset.Position(ts.Name.NamePos), ts.Name.Name))
+		return nil, fmt.Errorf(`%s: Cannot resolve type "%s" due to compilation errors`,
+			par.Pkg.Fset.Position(ts.Name.NamePos), ts.Name.Name)
 	default:
-		par.Errors = append(par.Errors, fmt.Errorf("%s: Evon annotations apply only to func or interface type declarations",
-			par.Pkg.Fset.Position(decl.Ann.Pos)))
+		return nil, fmt.Errorf("%s: Evon annotations apply only to func or interface type declarations",
+			par.Pkg.Fset.Position(decl.Ann.Pos))
 	}
 }
 

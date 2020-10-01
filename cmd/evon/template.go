@@ -189,7 +189,7 @@ package {{.Package}}
 		}
 	{{end}}
 
-	{{if .Flags.pause -}}
+	{{if .Flags.pause}}
 		// Resume clears the paused state of this dispatcher.
 		func ({{$ev}} *{{$evTyp}}) Resume() {
 			{{- if .Flags.lock}}{{$ev}}.lock.RLock(); defer {{$ev}}.lock.RUnlock(){{end}}
