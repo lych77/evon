@@ -12,7 +12,7 @@
 - [Temporarily Disable Dispatching](#temporarily-disable-dispatching)
 - [Parallelism](#parallelism)
 - [Panic Handling](#panic-handling)
-- [Dispatcher Chaining](#dispatcher-chaining)
+- [Dispatcher Chaining and Hierarchy](#dispatcher-chaining-and-hierarchy)
 - [Requirements on Handler Types](#requirements-on-handler-types)
 - [Command Line Arguments](#command-line-arguments)
 - [FAQ](#faq)
@@ -235,28 +235,39 @@ As shown, this flag adds a parameter to the factory function, which is a functio
 
 The panic handler will always be called by the same goroutine that has run the panicking event handler, and panics even within the panic handler are never handled again.
 
-## Dispatcher Chaining
+## Dispatcher Chaining and Hierarchy
 
-Dispatchers of the same type can be chained like the following:
+`.Emit` itself is intended to always be a valid handler of its own event type, regardless of being a function or an object. This makes event dispatchers of the same type able to be chained:
 
 ```go
-parent := NewSomeEvent()
-child := NewSomeEvent()
-child2 := NewSomeEvent()
-grandChild := NewSomeEvent()
+evt1 := NewSomeEvent()
+evt2 := NewSomeEvent()
+evt3 := NewSomeEvent()
 
-// Upstream emissions will be propagated to all downstream dispatchers
+// Upstream emissions will be propagated to downstream dispatchers
 // Beware not to make loops
-parent.Sub(child.Emit)
-parent.Sub(child2.Emit)
-child.Sub(grandChild.Emit)
+evt1.Sub(evt2.Emit)
+evt2.Sub(evt3.Emit)
 
-parent.Emit(...)
+evt1.Emit(...)
 // or 
-parent.Emit.Foo(...)
+evt1.Emit.Foo(...)
 ```
 
-`.Emit` itself is intended to be a valid handler of the event, regardless of being a function or an object.
+As one dispatcher can have multiple upstreams or downstreams, It can finally result in a hierarchical organization:
+
+```go
+// Fan-in mode, like "topic tree"s in message systems
+child1.Sub(parent.Emit)
+child2.Sub(parent.Emit)
+grandChild.Sub(child1.Emit)
+
+// Fan-out mode, for hierarchical broadcasting
+parent.Sub(child1.Emit)
+parent.Sub(child2.Emit)
+child1.Sub(grandChild.Emit)
+```
+
 
 Exception: for interface handlers, if the interface is not implementable within the current package ( i.e. any of its embedded interfaces that defined outside current package has unexported methods ), `.Emit` will just implement the available part of it, though not be implementing the whole interface. Such dispatchers cannot be chained.
 

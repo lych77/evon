@@ -293,9 +293,6 @@ func (par *parser) extractInterface(pkg *packages.Package, typ *ast.InterfaceTyp
 		}
 
 		embType, embPkg := par.resolveType(pkg, m.Type)
-		if embType == nil {
-			return nil, false
-		}
 		embIntf, ok := embType.(*ast.InterfaceType)
 		if !ok {
 			return nil, false
