@@ -205,7 +205,7 @@ A dispatcher is by default a "synchronous" one, meaning the subscribers are invo
 - `@evon(queue)`: All invocations to one subscriber ( regardless of which method ) are performed by the same goroutine, thus sequentialized. The emitter returns immediately too, not waiting for anybody. Invocations to different subscribers still run in parallel.
     - In this mode, The factory function of the dispatcher accepts one parameter: `qsize int`, to specify the length of the underlying `chan` that implements the queue. If the handler consumes queued events too slowly and finally made the queue full, subsequent emitter calls will block until rooms are made to store new events.
 
-Only one of these two flags can be used in a time. Plus the default case, there are totally three kinds of implementations of dispatchers.
+Only one of these two flags can be used at a time. Plus the default case, there are totally three kinds of implementations of dispatchers.
 
 Sometimes it's still necessary to wait for all subscribers to finish, that's what the `wait` flag is for. This flag can only be used together with `spawn` or `queue`：
 
