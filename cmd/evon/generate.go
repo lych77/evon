@@ -30,6 +30,7 @@ package main
 
 import (
 	"bytes"
+	_ "embed"
 	"fmt"
 	"go/ast"
 	"go/format"
@@ -42,6 +43,9 @@ import (
 	"golang.org/x/text/width"
 	"golang.org/x/tools/go/packages"
 )
+
+//go:embed evon_gen.go.template
+var templateText string
 
 func extractParamsArgs(list []*ast.Field, fset *token.FileSet, paramSet dedupSet) (string, string) {
 	dummies := newDedupSet("_")
@@ -166,6 +170,8 @@ type genFunc struct {
 	Args    string
 	Returns string
 }
+
+var localIdents = [...]string{"ev", "em", "s", "h", "wg"}
 
 func generate(par *parser, path string) {
 	file := &genFile{
