@@ -142,12 +142,11 @@ package {{.Package}}
 	func ({{$ev}} *{{$evTyp}}) Sub(handler {{$hdlrTyp}}) {{if .Flags.unsub}}func(){{end}} {
 		{{- if .Flags.lock}}{{$ev}}.lock.Lock(); defer {{$ev}}.lock.Unlock();{{end}}
 		{{- if .Flags.unsub}}
-		idx := new(int)
-		*idx = len({{$ev}}.slots);
+		idx := len({{$ev}}.slots);
 		{{- end}}
 		{{- if .Flags.queue}}q := make(chan func(), {{$ev}}.qsize){{end}}
 		{{$ev}}.slots = append({{$ev}}.slots, {{if $compSlot}}{{$slotTyp}}{
-			handler,{{if .Flags.unsub}} idx,{{end}}{{if .Flags.queue}} q,{{end}}
+			handler,{{if .Flags.unsub}} &idx,{{end}}{{if .Flags.queue}} q,{{end}}
 		}{{else}}handler{{end}});
 		{{- if .Flags.queue}}
 		go func() {
@@ -158,15 +157,15 @@ package {{.Package}}
 		{{- if .Flags.unsub}}
 		return func() {
 			{{- if .Flags.lock}}{{$ev}}.lock.Lock(); defer {{$ev}}.lock.Unlock(){{end}}
-			if *idx < 0 { return }
+			if idx < 0 { return }
 			last := len({{$ev}}.slots)-1
-			if last > *idx {
-				*({{$ev}}.slots[last].index) = *idx
-				{{$ev}}.slots[*idx] = {{$ev}}.slots[last]
+			if last > idx {
+				*({{$ev}}.slots[last].index) = idx
+				{{$ev}}.slots[idx] = {{$ev}}.slots[last]
 			};
 			{{- if .Flags.queue}}close(q){{end}}
 			{{$ev}}.slots = {{$ev}}.slots[:last]
-			*idx = -1
+			idx = -1
 		}
 		{{- end}}
 	}
