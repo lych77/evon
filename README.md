@@ -9,7 +9,7 @@
 - [Annotations Detailed](#annotations-detailed)
 - [Unsubscribing](#unsubscribing)
 - [Thread Safety](#thread-safety)
-- [Temporarily Disable Dispatching](#temporarily-disable-dispatching)
+- [Temporarily Disabling Dispatching](#temporarily-disabling-dispatching)
 - [Parallelism](#parallelism)
 - [Panic Handling](#panic-handling)
 - [Dispatcher Chaining and Hierarchy](#dispatcher-chaining-and-hierarchy)
@@ -179,7 +179,7 @@ type LoginHandler func(uid int, addr string)
 
 If the subscriber list does not change any more after some initialization steps are finished, concurrent emit operations are always safe even without a lock. In such cases the `lock` flag is not necessary.
 
-## Temporarily Disable Dispatching
+## Temporarily Disabling Dispatching
 
 ```go
 // @evon(pause)
