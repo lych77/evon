@@ -51,14 +51,10 @@ func main() {
 	}
 	flag.Parse()
 
-	dir := flag.Arg(0)
-	if dir == "" {
-		err := error(nil)
-		dir, err = os.Getwd()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Fatal: %s\n", err)
-			return
-		}
+	dir, err := filepath.Abs(flag.Arg(0))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Fatal: %s\n", err)
+		return
 	}
 
 	cfg := &packages.Config{
