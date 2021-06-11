@@ -4,19 +4,20 @@
 
 [![Build Status](https://travis-ci.com/lych77/evon.svg?branch=master)](https://travis-ci.com/lych77/evon) [![Go Report Card](https://goreportcard.com/badge/github.com/lych77/evon)](https://goreportcard.com/report/github.com/lych77/evon)
 
-- [Quick Start](#quick-start)
-- [Using Interfaces](#using-interfaces)
-- [Annotations Detailed](#annotations-detailed)
-- [Unsubscribing](#unsubscribing)
-- [Thread Safety](#thread-safety)
-- [Temporarily Disabling Dispatching](#temporarily-disabling-dispatching)
-- [Parallelism](#parallelism)
-- [Panic Handling](#panic-handling)
-- [Dispatcher Chaining and Hierarchy](#dispatcher-chaining-and-hierarchy)
-- [Requirements on Handler Types](#requirements-on-handler-types)
-- [Command Line Arguments](#command-line-arguments)
-- [FAQ](#faq)
 
+- [Events of Necessity](#events-of-necessity)
+  - [Quick Start](#quick-start)
+  - [Using Interfaces](#using-interfaces)
+  - [Annotations Detailed](#annotations-detailed)
+  - [Unsubscribing](#unsubscribing)
+  - [Thread Safety](#thread-safety)
+  - [Temporarily Disabling Dispatching](#temporarily-disabling-dispatching)
+  - [Parallelism](#parallelism)
+  - [Panic Handling](#panic-handling)
+  - [Dispatcher Chaining and Hierarchy](#dispatcher-chaining-and-hierarchy)
+  - [Handler Types Detailed](#handler-types-detailed)
+  - [Command Line Arguments](#command-line-arguments)
+  - [FAQ](#faq)
 ## Quick Start
 
 Installation:
@@ -271,7 +272,7 @@ child1.Sub(grandChild.Emit)
 
 Exception: for interface handlers, if the interface is not implementable within the current package ( i.e. any of its embedded interfaces that defined outside current package has unexported methods ), `.Emit` will just implement the available part of it, though not be implementing the whole interface. Such dispatchers cannot be chained.
 
-## Requirements on Handler Types
+## Handler Types Detailed
 
 There's almost no limitations on handler types besides the name suffix rule. But to cover the details, let's make clear of some points.
 
@@ -290,14 +291,14 @@ There's almost no limitations on handler types besides the name suffix rule. But
 **Interface embedding:**
 
 - Embedding is supported, all methods at any embedding level will be detected and emitters for them are generated.
-- Only the outermost interface type need to be annotated and to comply with the name suffix rule.
+- Only the outermost interface type needs to be annotated and to comply with the name suffix rule.
 - The final interface must have at least one method, as subscribers that can't receive events are meaningless.
 
 **Type redefinitions:**
 
 - Both `type A B` and `type A = B` are supported and behave the same, as long as the bottommost type satisfies the requirements.
-- Only the topmost type need to be annotated and to comply with the name suffix rule.
-    - Even if multiple types in the same definition chain are annotated, they are different event handler types despite similar shapes.
+- Only the topmost type needs to be annotated and to comply with the name suffix rule.
+    - Even if multiple types in the same definition chain are annotated, they are different event handler types despite similar shape.
 
 **Foreign types:**
 
@@ -306,6 +307,10 @@ There's almost no limitations on handler types besides the name suffix rule. But
 **Exported/unexported names:**
 
 - The generated names of the dispatcher type and its factory function will be the same kind as the provided handler type's.
+
+**Name collisions:**
+
+- The user can use arbitary names for handler parameters and return values, no need to worry about collisions with local identifiers in the generated functions. Evon will automatically rename the generated ones when necessary.
 
 ## Command Line Arguments
 
