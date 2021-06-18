@@ -41,6 +41,7 @@ var (
 	flagHandlerSuffix = flag.String("handler_suffix", "Handler", "Required suffix of the event handler type names")
 	flagEventSuffix   = flag.String("event_suffix", "Event", "Suffix of the generated event type names")
 	flagOut           = flag.String("out", "evon_gen.go", `Output source file name`)
+	flagTags          = flag.String("tags", "", `Comma-separated Go build tags`)
 	flagShow          = flag.Bool("show", false, "Show event handler types without generation")
 )
 
@@ -58,8 +59,9 @@ func main() {
 	}
 
 	cfg := &packages.Config{
-		Mode: packages.NeedName | packages.NeedImports | packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedDeps,
-		Dir:  dir,
+		Mode:       packages.NeedName | packages.NeedImports | packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedDeps,
+		Dir:        dir,
+		BuildFlags: []string{"-tags=" + *flagTags},
 	}
 
 	pkgs, err := packages.Load(cfg)

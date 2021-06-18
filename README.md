@@ -323,6 +323,8 @@ There's almost no limitations on handler types besides the name suffix rule. But
     Output source file name (default "evon_gen.go")
 -show
     Show event handler types without generation
+-tags string
+    Comma-separated Go build tags
 ```
 
 ## FAQ
