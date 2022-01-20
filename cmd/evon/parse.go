@@ -45,13 +45,14 @@ type parser struct {
 	Decls  []*declRec
 	Errors []error
 
-	IdentMaps  map[*packages.Package]map[types.Object]*ast.Ident
 	Imports    map[string]*importRec
 	ImportList []*importRec
 
 	NeedSync      bool
 	NeedSyncLocal bool
 	PkgNameSet    dedupSet
+
+	resolver typeResolver
 }
 
 type declRec struct {
@@ -80,9 +81,9 @@ type importRec struct {
 
 func newParser(pkg *packages.Package) *parser {
 	return &parser{
-		Pkg:       pkg,
-		IdentMaps: map[*packages.Package]map[types.Object]*ast.Ident{},
-		Imports:   map[string]*importRec{},
+		Pkg:      pkg,
+		Imports:  map[string]*importRec{},
+		resolver: make(typeResolver),
 	}
 }
 
@@ -180,7 +181,7 @@ func (par *parser) ParseFile(file *ast.File) {
 }
 
 func (par *parser) ExtractEvent(decl *declRec, ts *ast.TypeSpec) (*eventRec, error) {
-	underType, underPkg := par.resolveType(par.Pkg, ts.Type)
+	underPkg, underType := par.resolver.Resolve(par.Pkg, ts.Type)
 
 	switch realType := underType.(type) {
 	case *ast.FuncType:
@@ -204,22 +205,6 @@ func (par *parser) ExtractEvent(decl *declRec, ts *ast.TypeSpec) (*eventRec, err
 	}
 }
 
-func (par *parser) identMap(pkg *packages.Package) map[types.Object]*ast.Ident {
-	res, ok := par.IdentMaps[pkg]
-	if ok {
-		return res
-	}
-
-	res = map[types.Object]*ast.Ident{}
-	for i, o := range pkg.TypesInfo.Defs {
-		if o != nil && o.Parent() == pkg.Types.Scope() && o.Exported() {
-			res[o] = i
-		}
-	}
-	par.IdentMaps[pkg] = res
-	return res
-}
-
 func (par *parser) importRecord(pkg *types.Package) *importRec {
 	res, ok := par.Imports[pkg.Path()]
 	if !ok {
@@ -227,33 +212,6 @@ func (par *parser) importRecord(pkg *types.Package) *importRec {
 		par.Imports[pkg.Path()] = res
 	}
 	return res
-}
-
-func (par *parser) resolveType(pkg *packages.Package, typ ast.Expr) (ast.Expr, *packages.Package) {
-	switch realType := typ.(type) {
-	case *ast.Ident:
-		if realType.Obj != nil {
-			return par.resolveType(pkg, realType.Obj.Decl.(*ast.TypeSpec).Type)
-		}
-
-		target, ok := pkg.TypesInfo.Uses[realType]
-		if !ok {
-			return nil, nil
-		}
-		depPkg := pkg.Imports[target.Pkg().Path()]
-		depIdent, ok := par.identMap(depPkg)[target]
-		if !ok {
-			return nil, nil
-		}
-
-		return par.resolveType(depPkg, depIdent)
-	case *ast.SelectorExpr:
-		return par.resolveType(pkg, realType.Sel)
-	case *ast.ParenExpr:
-		return par.resolveType(pkg, realType.X)
-	default:
-		return typ, pkg
-	}
 }
 
 func (par *parser) extractFunc(pkg *packages.Package, name string, typ *ast.FuncType) *funcRec {
@@ -292,7 +250,7 @@ func (par *parser) extractInterface(pkg *packages.Package, typ *ast.InterfaceTyp
 			continue
 		}
 
-		embType, embPkg := par.resolveType(pkg, m.Type)
+		embPkg, embType := par.resolver.Resolve(pkg, m.Type)
 		embIntf, ok := embType.(*ast.InterfaceType)
 		if !ok {
 			return nil, false
