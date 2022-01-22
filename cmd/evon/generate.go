@@ -38,10 +38,87 @@ import (
 	"os"
 	"strings"
 	"text/template"
-
-	"golang.org/x/text/width"
-	"golang.org/x/tools/go/packages"
 )
+
+type genFile struct {
+	Package string
+	Imports []*genImport
+	Events  []*genEvent
+
+	HandlerSuffix string
+	EventSuffix   string
+
+	SyncAlias string
+}
+
+type genImport struct {
+	Alias string
+	Path  string
+}
+
+type genEvent struct {
+	Name     string
+	Flags    map[string]bool
+	FlagsLit string
+	Funcs    []*genFunc
+	Dedups   map[string]string
+}
+
+type genFunc struct {
+	Name    string
+	Params  string
+	Args    string
+	Returns string
+}
+
+func generate(par *parser, path string) bool {
+	file := &genFile{
+		Package:       par.Pkg.Name,
+		HandlerSuffix: *flagHandlerSuffix,
+		EventSuffix:   *flagEventSuffix,
+	}
+
+	if rec, ok := par.Imports["sync"]; ok {
+		file.SyncAlias = rec.Alias
+		delete(par.PkgNameSet, file.SyncAlias)
+	}
+
+	for _, decl := range par.Decls {
+		paramSet := dedupSet{}
+
+		gfs := []*genFunc{}
+		for _, f := range decl.Event.Funcs {
+			gf := &genFunc{Name: f.Name}
+			gf.Params, gf.Args = extractParamsArgs(f.Params, par.Pkg.Fset, paramSet)
+			gf.Returns = extractReturns(f.Returns, par.Pkg.Fset)
+			gfs = append(gfs, gf)
+		}
+
+		ge := &genEvent{
+			Name:     decl.Event.Name.Name[:len(decl.Event.Name.Name)-len(*flagHandlerSuffix)],
+			Flags:    decl.Ann.Flags,
+			FlagsLit: decl.Ann.FormatFlags(),
+			Funcs:    gfs,
+			Dedups:   map[string]string{},
+		}
+
+		par.PkgNameSet.Merge(paramSet)
+
+		for _, n := range localIdents {
+			ge.Dedups[n] = paramSet.Resolve(n)
+		}
+		file.Events = append(file.Events, ge)
+	}
+
+	for _, r := range par.ImportList {
+		if r.Alias == r.Name {
+			r.Alias = ""
+		}
+		file.Imports = append(file.Imports, &genImport{Alias: r.Alias, Path: r.Path})
+	}
+
+	return writeFile(file, path)
+}
 
 func extractParamsArgs(list []*ast.Field, fset *token.FileSet, paramSet dedupSet) (string, string) {
 	dummies := newDedupSet("_")
@@ -103,136 +180,7 @@ func extractReturns(list []*ast.Field, fset *token.FileSet) string {
 	return strings.Join(returns, ", ")
 }
 
-func process(pkg *packages.Package, path string) {
-	for _, e := range pkg.Errors {
-		if !strings.HasPrefix(e.Pos, path) {
-			fmt.Fprintf(os.Stderr, "[go] %s\n", e)
-		}
-	}
-
-	par := newParser(pkg)
-	par.ParsePkg()
-
-	if len(par.Errors) > 0 {
-		for _, e := range par.Errors {
-			fmt.Fprintf(os.Stderr, "[evon] %s\n", e)
-		}
-		return
-	}
-
-	if len(par.Decls) == 0 {
-		fmt.Println("(No handler types detected)")
-		if !*flagShow {
-			os.Remove(path)
-		}
-		return
-	}
-
-	if *flagShow {
-		showSummary(par)
-	} else {
-		generate(par, path)
-	}
-}
-
-type genFile struct {
-	Package string
-	Imports []*genImport
-	Events  []*genEvent
-
-	HandlerSuffix string
-	EventSuffix   string
-
-	SyncAlias      string
-	SyncAliasLocal string
-}
-
-type genImport struct {
-	Alias string
-	Path  string
-}
-
-type genEvent struct {
-	Name     string
-	Flags    map[string]bool
-	FlagsLit string
-	Funcs    []*genFunc
-	Dedups   map[string]string
-}
-
-type genFunc struct {
-	Name    string
-	Params  string
-	Args    string
-	Returns string
-}
-
-func generate(par *parser, path string) {
-	file := &genFile{
-		Package:       par.Pkg.Name,
-		HandlerSuffix: *flagHandlerSuffix,
-		EventSuffix:   *flagEventSuffix,
-	}
-
-	if rec, ok := par.Imports["sync"]; ok {
-		file.SyncAlias = rec.Alias
-		delete(par.PkgNameSet, file.SyncAlias)
-	}
-
-	for _, decl := range par.Decls {
-		for _, ev := range decl.Events {
-			paramSet := dedupSet{}
-
-			gfs := []*genFunc{}
-			for _, f := range ev.Funcs {
-				gf := &genFunc{Name: f.Name}
-				gf.Params, gf.Args = extractParamsArgs(f.Params, par.Pkg.Fset, paramSet)
-				gf.Returns = extractReturns(f.Returns, par.Pkg.Fset)
-				gfs = append(gfs, gf)
-			}
-
-			ge := &genEvent{
-				Name:     ev.Name.Name[:len(ev.Name.Name)-len(*flagHandlerSuffix)],
-				Flags:    decl.Ann.Flags,
-				FlagsLit: decl.Ann.FormatFlags(),
-				Funcs:    gfs,
-				Dedups:   map[string]string{},
-			}
-
-			par.PkgNameSet.Merge(paramSet)
-
-			for _, n := range localIdents {
-				ge.Dedups[n] = paramSet.Resolve(n)
-			}
-			file.Events = append(file.Events, ge)
-		}
-	}
-
-	for _, r := range par.ImportList {
-		if r.Alias == r.Name {
-			r.Alias = ""
-		}
-		file.Imports = append(file.Imports, &genImport{Alias: r.Alias, Path: r.Path})
-	}
-
-	if par.NeedSyncLocal {
-		file.SyncAliasLocal = par.PkgNameSet.Resolve(file.SyncAlias)
-		if file.SyncAliasLocal != file.SyncAlias {
-			file.Imports = append(file.Imports, &genImport{Alias: file.SyncAliasLocal, Path: "sync"})
-		}
-	}
-
-	writeFile(file, path)
-}
-
-func prefixIdent(p, s string) string {
-	if token.IsExported(s) {
-		return strings.Title(p) + strings.Title(s)
-	}
-	return strings.ToLower(p) + strings.Title(s)
-}
-
-func writeFile(file *genFile, path string) {
+func writeFile(file *genFile, path string) bool {
 	tpl := template.Must(template.New("").Funcs(template.FuncMap{"prefix": prefixIdent}).Parse(templateText))
 
 	buf := &bytes.Buffer{}
@@ -249,68 +197,18 @@ func writeFile(file *genFile, path string) {
 	outFile, err := os.Create(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Fatal: %s\n", err)
-		return
+		return false
 	}
 	defer outFile.Close()
 	outFile.Write(src)
 
 	fmt.Printf("Generated %s\n", path)
+	return true
 }
 
-func monospaceLen(s string) int {
-	res := 0
-	for _, ch := range s {
-		res++
-		switch width.LookupRune(ch).Kind() {
-		case width.EastAsianWide, width.EastAsianFullwidth:
-			res++
-		}
+func prefixIdent(p, s string) string {
+	if token.IsExported(s) {
+		return strings.Title(p) + strings.Title(s)
 	}
-	return res
-}
-
-func showSummary(par *parser) {
-	type showRow struct {
-		Kind      string
-		Name      *ast.Ident
-		NameWidth int
-		Flags     string
-	}
-
-	rows := []*showRow{}
-	maxNameWidth := 0
-	maxFlagsWidth := 0
-
-	for _, decl := range par.Decls {
-		flags := decl.Ann.FormatFlags()
-		if len(flags) > maxFlagsWidth {
-			maxFlagsWidth = len(flags)
-		}
-
-		for _, ev := range decl.Events {
-			row := &showRow{
-				Kind:      "I",
-				Name:      ev.Name,
-				NameWidth: monospaceLen(ev.Name.Name),
-				Flags:     flags,
-			}
-
-			if ev.Funcs[0].Name == "" {
-				row.Kind = "F"
-			}
-
-			if row.NameWidth > maxNameWidth {
-				maxNameWidth = row.NameWidth
-			}
-
-			rows = append(rows, row)
-		}
-	}
-
-	for _, r := range rows {
-		fmt.Printf("%s %s %s %s\n", r.Kind,
-			r.Name.Name+strings.Repeat(" ", maxNameWidth-r.NameWidth),
-			r.Flags+strings.Repeat(" ", maxFlagsWidth-len(r.Flags)),
-			par.Pkg.Fset.Position(r.Name.NamePos))
-	}
+	return strings.ToLower(p) + strings.Title(s)
 }

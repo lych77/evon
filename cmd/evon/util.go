@@ -28,7 +28,9 @@
 
 package main
 
-import "strconv"
+import (
+	"strconv"
+)
 
 type dedupSet map[string]bool
 

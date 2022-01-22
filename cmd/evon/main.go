@@ -31,9 +31,12 @@ package main
 import (
 	"flag"
 	"fmt"
+	"go/ast"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"golang.org/x/text/width"
 	"golang.org/x/tools/go/packages"
 )
 
@@ -70,5 +73,96 @@ func main() {
 		return
 	}
 
-	process(pkgs[0], filepath.Join(dir, *flagOut))
+	if !process(pkgs[0], filepath.Join(dir, *flagOut)) {
+		os.Exit(1)
+	}
+}
+
+func process(pkg *packages.Package, path string) bool {
+	for _, e := range pkg.Errors {
+		if !strings.HasPrefix(e.Pos, path) {
+			fmt.Fprintf(os.Stderr, "[go] %s\n", e)
+		}
+	}
+
+	par := newParser(pkg)
+	par.ParsePkg()
+
+	if len(par.Errors) > 0 {
+		for _, e := range par.Errors {
+			fmt.Fprintf(os.Stderr, "[evon] %s\n", e)
+		}
+		return false
+	}
+
+	if len(par.Decls) == 0 {
+		fmt.Println("(No handler types detected)")
+		if !*flagShow {
+			os.Remove(path)
+		}
+		return true
+	}
+
+	if *flagShow {
+		showSummary(par)
+		return true
+	}
+
+	return generate(par, path)
+}
+
+func showSummary(par *parser) {
+	type showRow struct {
+		Kind      string
+		Name      *ast.Ident
+		NameWidth int
+		Flags     string
+	}
+
+	rows := []*showRow{}
+	maxNameWidth := 0
+	maxFlagsWidth := 0
+
+	for _, decl := range par.Decls {
+		flags := decl.Ann.FormatFlags()
+		if len(flags) > maxFlagsWidth {
+			maxFlagsWidth = len(flags)
+		}
+
+		row := &showRow{
+			Kind:      "I",
+			Name:      decl.Event.Name,
+			NameWidth: monospaceLen(decl.Event.Name.Name),
+			Flags:     flags,
+		}
+
+		if decl.Event.Funcs[0].Name == "" {
+			row.Kind = "F"
+		}
+
+		if row.NameWidth > maxNameWidth {
+			maxNameWidth = row.NameWidth
+		}
+
+		rows = append(rows, row)
+	}
+
+	for _, r := range rows {
+		fmt.Printf("%s %s %s %s\n", r.Kind,
+			r.Name.Name+strings.Repeat(" ", maxNameWidth-r.NameWidth),
+			r.Flags+strings.Repeat(" ", maxFlagsWidth-len(r.Flags)),
+			par.Pkg.Fset.Position(r.Name.NamePos))
+	}
+}
+
+func monospaceLen(s string) int {
+	res := 0
+	for _, ch := range s {
+		res++
+		switch width.LookupRune(ch).Kind() {
+		case width.EastAsianWide, width.EastAsianFullwidth:
+			res++
+		}
+	}
+	return res
 }

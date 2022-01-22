@@ -112,7 +112,7 @@ package {{.Package}}
 		func {{$recv}} {{or .Name "Emit"}}({{.Params}}) {{if .Returns}}({{.Returns}}){{end}} {
 			{{- if $flags.lock}}{{$evLoc}}.lock.RLock(); defer {{$evLoc}}.lock.RUnlock();{{end}}
 			{{- if $flags.pause}}if {{$evLoc}}.paused { return };{{end}}
-			{{- if $flags.wait}}{{$wg}} := {{$.SyncAliasLocal}}.WaitGroup{}; {{$wg}}.Add(len({{$evLoc}}.slots));{{end}}
+			{{- if $flags.wait}}{{$wg}} := {{$.SyncAlias}}.WaitGroup{}; {{$wg}}.Add(len({{$evLoc}}.slots));{{end}}
 			for _, {{$s}} := range {{$evLoc}}.slots {
 				{{- $wrapBegin}}
 				{{- if $flags.wait}}defer {{$wg}}.Done();{{end}}

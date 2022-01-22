@@ -42,22 +42,21 @@ import (
 type parser struct {
 	Pkg *packages.Package
 
-	Decls  []*declRec
-	Errors []error
+	Decls   []*declRec
+	Imports map[string]*importRec
+	Errors  []error
 
-	Imports    map[string]*importRec
+	NeedSync bool
+
 	ImportList []*importRec
-
-	NeedSync      bool
-	NeedSyncLocal bool
-	PkgNameSet    dedupSet
+	PkgNameSet dedupSet
 
 	resolver typeResolver
 }
 
 type declRec struct {
-	Ann    *annotation
-	Events []*eventRec
+	Ann   *annotation
+	Event *eventRec
 }
 
 type eventRec struct {
@@ -82,7 +81,7 @@ type importRec struct {
 func newParser(pkg *packages.Package) *parser {
 	return &parser{
 		Pkg:      pkg,
-		Imports:  map[string]*importRec{},
+		Imports:  make(map[string]*importRec),
 		resolver: make(typeResolver),
 	}
 }
@@ -100,30 +99,29 @@ func (par *parser) ParsePkg() {
 }
 
 func (par *parser) ParseFile(file *ast.File) {
-	type annRec struct {
-		Decl    *declRec
-		Errors  []error
-		Visited bool
-	}
-
-	anns := []*annRec{}
-	cmtAnns := map[*ast.CommentGroup]*annRec{}
-
-	for _, cg := range file.Comments {
-		ann, err := extractAnnotation(cg, par.Pkg.Fset)
-		if err != nil {
-			par.Errors = append(par.Errors, err)
-			continue
+	cgIdx := 0
+	scanCmt := func(cur *ast.CommentGroup) *annotation {
+		if cur == nil {
+			return nil
 		}
 
-		if ann != nil {
-			rec := &annRec{Decl: &declRec{Ann: ann}}
-			anns = append(anns, rec)
-			cmtAnns[cg] = rec
+		for cgIdx < len(file.Comments) {
+			cg := file.Comments[cgIdx]
+			cgIdx++
 
-			par.NeedSyncLocal = par.NeedSyncLocal || ann.Flags[annWait]
-			par.NeedSync = par.NeedSyncLocal || ann.Flags[annLock]
+			ann, err := extractAnnotation(cg, par.Pkg.Fset)
+			if err != nil {
+				par.Errors = append(par.Errors, err)
+			} else if ann != nil && cg != cur {
+				par.Errors = append(par.Errors, fmt.Errorf("%s: Evon annotations apply only to func or interface type declarations",
+					par.Pkg.Fset.Position(ann.Pos)))
+			}
+
+			if cg == cur {
+				return ann
+			}
 		}
+		return nil
 	}
 
 	for _, d := range file.Decls {
@@ -132,20 +130,15 @@ func (par *parser) ParseFile(file *ast.File) {
 			continue
 		}
 
-		outerStack := []*annRec{}
-		if ann, ok := cmtAnns[gd.Doc]; ok {
-			outerStack = append(outerStack, ann)
-		}
-
+		grpAnn := scanCmt(gd.Doc)
 		for _, s := range gd.Specs {
 			ts := s.(*ast.TypeSpec)
 
-			innerStack := outerStack[:]
-			if ann, ok := cmtAnns[ts.Doc]; ok {
-				innerStack = append(innerStack, ann)
+			ann := scanCmt(ts.Doc)
+			if ann == nil {
+				ann = grpAnn
 			}
-
-			if len(innerStack) == 0 {
+			if ann == nil {
 				continue
 			}
 
@@ -154,40 +147,24 @@ func (par *parser) ParseFile(file *ast.File) {
 					par.Pkg.Fset.Position(ts.Name.NamePos), ts.Name.Name, *flagHandlerSuffix))
 			}
 
-			curAnn := innerStack[len(innerStack)-1]
-
-			if ev, err := par.ExtractEvent(curAnn.Decl, ts); err != nil {
+			if ev, err := par.ExtractEvent(ann, ts); err != nil {
 				par.Errors = append(par.Errors, err)
 			} else {
-				curAnn.Decl.Events = append(curAnn.Decl.Events, ev)
+				par.Decls = append(par.Decls, &declRec{Ann: ann, Event: ev})
+				if ann.Flags[annLock] || ann.Flags[annWait] {
+					par.NeedSync = true
+				}
 			}
-
-			for _, ann := range innerStack {
-				ann.Visited = true
-			}
-		}
-	}
-
-	for _, ann := range anns {
-		if !ann.Visited {
-			par.Errors = append(par.Errors, fmt.Errorf("%s: Evon annotations apply only to func or interface type declarations",
-				par.Pkg.Fset.Position(ann.Decl.Ann.Pos)))
-		} else if len(ann.Errors) > 0 {
-			par.Errors = append(par.Errors, ann.Errors...)
-		} else {
-			par.Decls = append(par.Decls, ann.Decl)
 		}
 	}
 }
 
-func (par *parser) ExtractEvent(decl *declRec, ts *ast.TypeSpec) (*eventRec, error) {
-	underPkg, underType := par.resolver.Resolve(par.Pkg, ts.Type)
-
-	switch realType := underType.(type) {
+func (par *parser) ExtractEvent(ann *annotation, ts *ast.TypeSpec) (*eventRec, error) {
+	switch underPkg, underType := par.resolver.Resolve(par.Pkg, ts.Type); typeImpl := underType.(type) {
 	case *ast.FuncType:
-		return &eventRec{Name: ts.Name, Funcs: []*funcRec{par.extractFunc(underPkg, "", realType)}}, nil
+		return &eventRec{Name: ts.Name, Funcs: []*funcRec{par.extractFunc(underPkg, "", typeImpl)}}, nil
 	case *ast.InterfaceType:
-		if funcs, ok := par.extractInterface(underPkg, realType, map[string]bool{}); !ok {
+		if funcs, ok := par.extractInterface(underPkg, typeImpl, map[string]bool{}); !ok {
 			return nil, fmt.Errorf(`%s: Cannot resolve type "%s" due to compilation errors`,
 				par.Pkg.Fset.Position(ts.Name.NamePos), ts.Name.Name)
 		} else if len(funcs) == 0 {
@@ -201,17 +178,8 @@ func (par *parser) ExtractEvent(decl *declRec, ts *ast.TypeSpec) (*eventRec, err
 			par.Pkg.Fset.Position(ts.Name.NamePos), ts.Name.Name)
 	default:
 		return nil, fmt.Errorf("%s: Evon annotations apply only to func or interface type declarations",
-			par.Pkg.Fset.Position(decl.Ann.Pos))
+			par.Pkg.Fset.Position(ann.Pos))
 	}
-}
-
-func (par *parser) importRecord(pkg *types.Package) *importRec {
-	res, ok := par.Imports[pkg.Path()]
-	if !ok {
-		res = &importRec{Path: pkg.Path(), Name: pkg.Name()}
-		par.Imports[pkg.Path()] = res
-	}
-	return res
 }
 
 func (par *parser) extractFunc(pkg *packages.Package, name string, typ *ast.FuncType) *funcRec {
@@ -265,6 +233,15 @@ func (par *parser) extractInterface(pkg *packages.Package, typ *ast.InterfaceTyp
 	return res, true
 }
 
+func (par *parser) importRecord(pkg *types.Package) *importRec {
+	res, ok := par.Imports[pkg.Path()]
+	if !ok {
+		res = &importRec{Path: pkg.Path(), Name: pkg.Name()}
+		par.Imports[pkg.Path()] = res
+	}
+	return res
+}
+
 type typeVisitor struct {
 	Parser  *parser
 	Pkg     *packages.Package
@@ -272,22 +249,22 @@ type typeVisitor struct {
 }
 
 func (vis *typeVisitor) Visit(node ast.Node) ast.Visitor {
-	switch realNode := node.(type) {
+	switch nodeImpl := node.(type) {
 	case *ast.Ident:
-		if obj, ok := vis.Pkg.TypesInfo.Uses[realNode]; ok {
-			switch realObj := obj.(type) {
+		if obj, ok := vis.Pkg.TypesInfo.Uses[nodeImpl]; ok {
+			switch objImpl := obj.(type) {
 			case *types.PkgName:
-				rec := vis.Parser.importRecord(realObj.Imported())
-				rec.PkgIdents = append(rec.PkgIdents, realNode)
+				rec := vis.Parser.importRecord(objImpl.Imported())
+				rec.PkgIdents = append(rec.PkgIdents, nodeImpl)
 			case *types.TypeName:
-				if realObj.Pkg() != nil && realObj.Pkg() != vis.Parser.Pkg.Types && realNode != vis.LastSel {
-					rec := vis.Parser.importRecord(realObj.Pkg())
-					rec.TypeIdents = append(rec.TypeIdents, realNode)
+				if objImpl.Pkg() != nil && objImpl.Pkg() != vis.Parser.Pkg.Types && nodeImpl != vis.LastSel {
+					rec := vis.Parser.importRecord(objImpl.Pkg())
+					rec.TypeIdents = append(rec.TypeIdents, nodeImpl)
 				}
 			}
 		}
 	case *ast.SelectorExpr:
-		vis.LastSel = realNode.Sel
+		vis.LastSel = nodeImpl.Sel
 	}
 
 	return vis

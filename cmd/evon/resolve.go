@@ -48,13 +48,18 @@ func (reso typeResolver) Resolve(pkg *packages.Package, typ ast.Expr) (*packages
 		if !ok {
 			return nil, nil
 		}
-		depPkg := pkg.Imports[target.Pkg().Path()]
-		depIdent, ok := reso.identMap(depPkg)[target]
+
+		nextPkg := pkg
+		if target.Pkg() != pkg.Types {
+			nextPkg = pkg.Imports[target.Pkg().Path()]
+		}
+
+		nextIdent, ok := reso.identMap(nextPkg, pkg)[target]
 		if !ok {
 			return nil, nil
 		}
 
-		return reso.Resolve(depPkg, depIdent)
+		return reso.Resolve(nextPkg, nextIdent)
 	case *ast.SelectorExpr:
 		return reso.Resolve(pkg, typImpl.Sel)
 	case *ast.ParenExpr:
@@ -64,15 +69,14 @@ func (reso typeResolver) Resolve(pkg *packages.Package, typ ast.Expr) (*packages
 	}
 }
 
-func (reso typeResolver) identMap(pkg *packages.Package) map[types.Object]*ast.Ident {
-	res, ok := reso[pkg]
-	if ok {
+func (reso typeResolver) identMap(pkg, base *packages.Package) map[types.Object]*ast.Ident {
+	if res, ok := reso[pkg]; ok {
 		return res
 	}
 
-	res = map[types.Object]*ast.Ident{}
+	res := make(map[types.Object]*ast.Ident)
 	for i, o := range pkg.TypesInfo.Defs {
-		if o != nil && o.Parent() == pkg.Types.Scope() && o.Exported() {
+		if o != nil && o.Parent() == pkg.Types.Scope() && (o.Exported() || pkg == base) {
 			res[o] = i
 		}
 	}
