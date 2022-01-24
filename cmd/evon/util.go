@@ -32,10 +32,12 @@ import (
 	"strconv"
 )
 
+type void = struct{}
+
 type dedupSet map[string]bool
 
 func newDedupSet(preset ...string) dedupSet {
-	set := dedupSet{}
+	set := make(dedupSet)
 	for _, p := range preset {
 		set[p] = true
 	}

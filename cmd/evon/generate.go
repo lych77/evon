@@ -36,6 +36,7 @@ import (
 	"go/printer"
 	"go/token"
 	"os"
+	"sort"
 	"strings"
 	"text/template"
 )
@@ -48,7 +49,8 @@ type genFile struct {
 	HandlerSuffix string
 	EventSuffix   string
 
-	SyncAlias string
+	SyncAlias      string
+	SyncAliasLocal string
 }
 
 type genImport struct {
@@ -65,10 +67,10 @@ type genEvent struct {
 }
 
 type genFunc struct {
-	Name    string
-	Params  string
-	Args    string
-	Returns string
+	Name       string
+	Sig        string
+	Args       string
+	HasResults bool
 }
 
 func generate(par *parser, path string) bool {
@@ -78,19 +80,15 @@ func generate(par *parser, path string) bool {
 		EventSuffix:   *flagEventSuffix,
 	}
 
-	if rec, ok := par.Imports["sync"]; ok {
-		file.SyncAlias = rec.Alias
-		delete(par.PkgNameSet, file.SyncAlias)
-	}
+	importList, pkgNameSet := dedupImports(par)
 
 	for _, decl := range par.Decls {
-		paramSet := dedupSet{}
+		paramSet := newDedupSet()
 
 		gfs := []*genFunc{}
 		for _, f := range decl.Event.Funcs {
 			gf := &genFunc{Name: f.Name}
-			gf.Params, gf.Args = extractParamsArgs(f.Params, par.Pkg.Fset, paramSet)
-			gf.Returns = extractReturns(f.Returns, par.Pkg.Fset)
+			renderSignatureArgs(gf, f.Type, par.Pkg.Fset, paramSet)
 			gfs = append(gfs, gf)
 		}
 
@@ -99,10 +97,10 @@ func generate(par *parser, path string) bool {
 			Flags:    decl.Ann.Flags,
 			FlagsLit: decl.Ann.FormatFlags(),
 			Funcs:    gfs,
-			Dedups:   map[string]string{},
+			Dedups:   make(map[string]string),
 		}
 
-		par.PkgNameSet.Merge(paramSet)
+		pkgNameSet.Merge(paramSet)
 
 		for _, n := range localIdents {
 			ge.Dedups[n] = paramSet.Resolve(n)
@@ -110,74 +108,103 @@ func generate(par *parser, path string) bool {
 		file.Events = append(file.Events, ge)
 	}
 
-	for _, r := range par.ImportList {
-		if r.Alias == r.Name {
-			r.Alias = ""
+	for _, r := range importList {
+		gi := &genImport{Path: r.Path}
+		if r.Alias != r.Name {
+			gi.Alias = r.Alias
 		}
-		file.Imports = append(file.Imports, &genImport{Alias: r.Alias, Path: r.Path})
+		file.Imports = append(file.Imports, gi)
+	}
+
+	if rec, ok := par.Imports["sync"]; ok {
+		file.SyncAlias = rec.Alias
+		if rec.Local {
+			file.SyncAliasLocal = pkgNameSet.Resolve(file.SyncAlias)
+			if file.SyncAliasLocal != file.SyncAlias {
+				file.Imports = append(file.Imports, &genImport{Alias: file.SyncAliasLocal, Path: "sync"})
+			}
+		}
 	}
 
 	return writeFile(file, path)
 }
 
-func extractParamsArgs(list []*ast.Field, fset *token.FileSet, paramSet dedupSet) (string, string) {
-	dummies := newDedupSet("_")
-	for _, pg := range list {
-		for _, n := range pg.Names {
-			if n.Name != "_" {
-				dummies.Resolve(n.Name)
-			}
+func dedupImports(par *parser) ([]*importRec, dedupSet) {
+	recs := []*importRec{}
+	for _, r := range par.Imports {
+		recs = append(recs, r)
+	}
+	sort.Slice(recs, func(i, j int) bool {
+		iPrio := recs[i].Priority
+		jPrio := recs[j].Priority
+		return iPrio < jPrio || iPrio == jPrio && recs[i].Path < recs[j].Path
+	})
+
+	dedup := newDedupSet()
+	for _, r := range recs {
+		r.Alias = dedup.Resolve(r.Name)
+
+		for id := range r.TypeIdents {
+			id.Name = r.Alias + "." + id.Name
+		}
+		for id := range r.PkgIdents {
+			id.Name = r.Alias
 		}
 	}
 
-	params := []string{}
-	args := []string{}
-
-	for _, pg := range list {
-		if len(pg.Names) == 0 {
-			pg.Names = append(pg.Names, ast.NewIdent(dummies.Resolve("_")))
-		}
-
-		argGrp := []string{}
-		for _, n := range pg.Names {
-			if n.Name == "_" {
-				n.Name = dummies.Resolve("_")
-			}
-
-			argGrp = append(argGrp, n.Name)
-			args = append(args, n.Name)
-			paramSet[n.Name] = true
-		}
-
-		typeBuf := &bytes.Buffer{}
-		printer.Fprint(typeBuf, fset, pg.Type)
-		params = append(params, strings.Join(argGrp, ", ")+" "+typeBuf.String())
-	}
-
-	argsStr := strings.Join(args, ", ")
-	if len(list) > 0 {
-		if _, ok := list[len(list)-1].Type.(*ast.Ellipsis); ok {
-			argsStr += "..."
-		}
-	}
-
-	return strings.Join(params, ", "), argsStr
+	return recs, dedup
 }
 
-func extractReturns(list []*ast.Field, fset *token.FileSet) string {
-	returns := []string{}
-
-	for _, pg := range list {
-		blanks := "_"
-		if len(pg.Names) > 1 {
-			blanks += strings.Repeat(", _", len(pg.Names)-1)
+func renderSignatureArgs(gf *genFunc, typ *ast.FuncType, fset *token.FileSet, allParamSet dedupSet) {
+	paramSet := newDedupSet("_")
+	for _, pg := range typ.Params.List {
+		for _, n := range pg.Names {
+			if n.Name != "_" {
+				paramSet[n.Name] = true
+			}
 		}
-		typeBuf := &bytes.Buffer{}
-		printer.Fprint(typeBuf, fset, pg.Type)
-		returns = append(returns, blanks+" "+typeBuf.String())
 	}
 
-	return strings.Join(returns, ", ")
+	args := []string{}
+
+	for _, pg := range typ.Params.List {
+		if len(pg.Names) == 0 {
+			pg.Names = append(pg.Names, ast.NewIdent("_"))
+		}
+
+		for _, n := range pg.Names {
+			if n.Name == "_" {
+				n.Name = paramSet.Resolve("_")
+			}
+
+			args = append(args, n.Name)
+			allParamSet[n.Name] = true
+		}
+	}
+
+	gf.Args = strings.Join(args, ", ")
+	if len(typ.Params.List) > 0 {
+		if _, ok := typ.Params.List[len(typ.Params.List)-1].Type.(*ast.Ellipsis); ok {
+			gf.Args += "..."
+		}
+	}
+
+	if typ.Results != nil {
+		for _, pg := range typ.Results.List {
+			if len(pg.Names) == 0 {
+				pg.Names = append(pg.Names, ast.NewIdent("_"))
+			} else {
+				for _, n := range pg.Names {
+					n.Name = "_"
+				}
+			}
+		}
+		gf.HasResults = true
+	}
+
+	sigBuf := &bytes.Buffer{}
+	printer.Fprint(sigBuf, fset, typ)
+	gf.Sig = sigBuf.String()[4:]
 }
 
 func writeFile(file *genFile, path string) bool {

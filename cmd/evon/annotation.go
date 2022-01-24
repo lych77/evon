@@ -76,7 +76,7 @@ var validFlags = map[string]bool{
 }
 
 func extractAnnotation(cg *ast.CommentGroup, fset *token.FileSet) (*annotation, error) {
-	ann := &annotation{Flags: map[string]bool{}}
+	ann := &annotation{Flags: make(map[string]bool)}
 
 	foundCmt := (*ast.Comment)(nil)
 	foundOffsets := []int(nil)

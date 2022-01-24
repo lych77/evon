@@ -109,10 +109,10 @@ package {{.Package}}
 		{{end}}
 
 		// {{or .Name "Emit"}} emits an event to all subscribed handlers.
-		func {{$recv}} {{or .Name "Emit"}}({{.Params}}) {{if .Returns}}({{.Returns}}){{end}} {
+		func {{$recv}} {{or .Name "Emit"}}{{.Sig}} {
 			{{- if $flags.lock}}{{$evLoc}}.lock.RLock(); defer {{$evLoc}}.lock.RUnlock();{{end}}
 			{{- if $flags.pause}}if {{$evLoc}}.paused { return };{{end}}
-			{{- if $flags.wait}}{{$wg}} := {{$.SyncAlias}}.WaitGroup{}; {{$wg}}.Add(len({{$evLoc}}.slots));{{end}}
+			{{- if $flags.wait}}{{$wg}} := {{$.SyncAliasLocal}}.WaitGroup{}; {{$wg}}.Add(len({{$evLoc}}.slots));{{end}}
 			for _, {{$s}} := range {{$evLoc}}.slots {
 				{{- $wrapBegin}}
 				{{- if $flags.wait}}defer {{$wg}}.Done();{{end}}
@@ -125,7 +125,7 @@ package {{.Package}}
 				{{- $wrapEnd}}
 			};
 			{{- if $flags.wait}}{{$wg}}.Wait();{{end}}
-			{{- if .Returns}}return{{end}}
+			{{- if .HasResults}}return{{end}}
 		}
 	{{end}}
 

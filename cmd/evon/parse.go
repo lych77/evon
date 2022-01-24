@@ -33,7 +33,6 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
-	"sort"
 	"strings"
 
 	"golang.org/x/tools/go/packages"
@@ -45,11 +44,6 @@ type parser struct {
 	Decls   []*declRec
 	Imports map[string]*importRec
 	Errors  []error
-
-	NeedSync bool
-
-	ImportList []*importRec
-	PkgNameSet dedupSet
 
 	resolver typeResolver
 }
@@ -65,18 +59,25 @@ type eventRec struct {
 }
 
 type funcRec struct {
-	Name    string
-	Params  []*ast.Field
-	Returns []*ast.Field
+	Name string
+	Type *ast.FuncType
 }
 
 type importRec struct {
 	Path       string
 	Name       string
 	Alias      string
-	PkgIdents  []*ast.Ident
-	TypeIdents []*ast.Ident
+	PkgIdents  map[*ast.Ident]void
+	TypeIdents map[*ast.Ident]void
+	Priority   int
+	Local      bool
 }
+
+const (
+	prioStd = iota
+	prioUser
+	prioInternal
+)
 
 func newParser(pkg *packages.Package) *parser {
 	return &parser{
@@ -90,12 +91,6 @@ func (par *parser) ParsePkg() {
 	for _, f := range par.Pkg.Syntax {
 		par.ParseFile(f)
 	}
-
-	if len(par.Errors) > 0 {
-		return
-	}
-
-	par.DedupImports()
 }
 
 func (par *parser) ParseFile(file *ast.File) {
@@ -151,8 +146,12 @@ func (par *parser) ParseFile(file *ast.File) {
 				par.Errors = append(par.Errors, err)
 			} else {
 				par.Decls = append(par.Decls, &declRec{Ann: ann, Event: ev})
+
 				if ann.Flags[annLock] || ann.Flags[annWait] {
-					par.NeedSync = true
+					par.importRecord("sync", "sync", prioInternal)
+				}
+				if ann.Flags[annWait] {
+					par.Imports["sync"].Local = true
 				}
 			}
 		}
@@ -164,7 +163,7 @@ func (par *parser) ExtractEvent(ann *annotation, ts *ast.TypeSpec) (*eventRec, e
 	case *ast.FuncType:
 		return &eventRec{Name: ts.Name, Funcs: []*funcRec{par.extractFunc(underPkg, "", typeImpl)}}, nil
 	case *ast.InterfaceType:
-		if funcs, ok := par.extractInterface(underPkg, typeImpl, map[string]bool{}); !ok {
+		if funcs, ok := par.extractInterface(underPkg, typeImpl, make(map[string]bool)); !ok {
 			return nil, fmt.Errorf(`%s: Cannot resolve type "%s" due to compilation errors`,
 				par.Pkg.Fset.Position(ts.Name.NamePos), ts.Name.Name)
 		} else if len(funcs) == 0 {
@@ -184,18 +183,16 @@ func (par *parser) ExtractEvent(ann *annotation, ts *ast.TypeSpec) (*eventRec, e
 
 func (par *parser) extractFunc(pkg *packages.Package, name string, typ *ast.FuncType) *funcRec {
 	res := &funcRec{
-		Name:   name,
-		Params: typ.Params.List,
+		Name: name,
+		Type: typ,
 	}
 
-	for _, g := range res.Params {
+	for _, g := range typ.Params.List {
 		ast.Walk(&typeVisitor{Parser: par, Pkg: pkg}, g.Type)
 	}
 
 	if typ.Results != nil {
-		res.Returns = typ.Results.List
-
-		for _, g := range res.Returns {
+		for _, g := range typ.Results.List {
 			ast.Walk(&typeVisitor{Parser: par, Pkg: pkg}, g.Type)
 		}
 	}
@@ -233,11 +230,24 @@ func (par *parser) extractInterface(pkg *packages.Package, typ *ast.InterfaceTyp
 	return res, true
 }
 
-func (par *parser) importRecord(pkg *types.Package) *importRec {
-	res, ok := par.Imports[pkg.Path()]
-	if !ok {
-		res = &importRec{Path: pkg.Path(), Name: pkg.Name()}
-		par.Imports[pkg.Path()] = res
+func (par *parser) importRecord(path, name string, prio int) *importRec {
+	res, ok := par.Imports[path]
+	if ok {
+		if prio < res.Priority {
+			res.Priority = prio
+		}
+	} else {
+		if prio == prioUser && !strings.Contains(path, ".") {
+			prio = prioStd
+		}
+		res = &importRec{
+			Path:       path,
+			Name:       name,
+			Priority:   prio,
+			PkgIdents:  make(map[*ast.Ident]void),
+			TypeIdents: make(map[*ast.Ident]void),
+		}
+		par.Imports[path] = res
 	}
 	return res
 }
@@ -254,12 +264,14 @@ func (vis *typeVisitor) Visit(node ast.Node) ast.Visitor {
 		if obj, ok := vis.Pkg.TypesInfo.Uses[nodeImpl]; ok {
 			switch objImpl := obj.(type) {
 			case *types.PkgName:
-				rec := vis.Parser.importRecord(objImpl.Imported())
-				rec.PkgIdents = append(rec.PkgIdents, nodeImpl)
+				imp := objImpl.Imported()
+				rec := vis.Parser.importRecord(imp.Path(), imp.Name(), prioUser)
+				rec.PkgIdents[nodeImpl] = void{}
 			case *types.TypeName:
-				if objImpl.Pkg() != nil && objImpl.Pkg() != vis.Parser.Pkg.Types && nodeImpl != vis.LastSel {
-					rec := vis.Parser.importRecord(objImpl.Pkg())
-					rec.TypeIdents = append(rec.TypeIdents, nodeImpl)
+				imp := objImpl.Pkg()
+				if imp != nil && imp != vis.Parser.Pkg.Types && nodeImpl != vis.LastSel {
+					rec := vis.Parser.importRecord(imp.Path(), imp.Name(), prioUser)
+					rec.TypeIdents[nodeImpl] = void{}
 				}
 			}
 		}
@@ -268,31 +280,4 @@ func (vis *typeVisitor) Visit(node ast.Node) ast.Visitor {
 	}
 
 	return vis
-}
-
-func (par *parser) DedupImports() {
-	if par.NeedSync && par.Imports["sync"] == nil {
-		par.Imports["sync"] = &importRec{Path: "sync", Name: "sync"}
-	}
-
-	for _, r := range par.Imports {
-		par.ImportList = append(par.ImportList, r)
-	}
-	sort.Slice(par.ImportList, func(i, j int) bool {
-		iDot := strings.Contains(par.ImportList[i].Path, ".")
-		jDot := strings.Contains(par.ImportList[j].Path, ".")
-		return !iDot && jDot || iDot == jDot && par.ImportList[i].Path < par.ImportList[j].Path
-	})
-
-	par.PkgNameSet = newDedupSet()
-	for _, r := range par.ImportList {
-		r.Alias = par.PkgNameSet.Resolve(r.Name)
-
-		for _, id := range r.TypeIdents {
-			id.Name = r.Alias + "." + id.Name
-		}
-		for _, id := range r.PkgIdents {
-			id.Name = r.Alias
-		}
-	}
 }
